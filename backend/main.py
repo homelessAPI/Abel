@@ -336,7 +336,14 @@ def matches_filters(job, search):
     if search.remote is not None and job["remote"] != search.remote:
         return False
     if search.employment_type:
-        if search.employment_type.lower() not in job["employment_type"].lower():
+        type_terms = {
+            "FULLTIME": ("full time", "full-time", "fulltime"),
+            "PARTTIME": ("part time", "part-time", "parttime"),
+            "CONTRACTOR": ("contractor", "contract"),
+            "INTERN": ("intern", "internship"),
+            "TEMPORARY": ("temporary", "temp"),
+        }.get(search.employment_type, (search.employment_type.lower(),))
+        if not any(term in job["employment_type"].lower() for term in type_terms):
             return False
     if search.experience_level:
         level = search.experience_level.lower()
