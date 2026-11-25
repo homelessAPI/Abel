@@ -2,6 +2,7 @@ import ipaddress
 import os
 import socket
 from datetime import datetime, timedelta, timezone
+import time
 from urllib.parse import urlparse
 
 import requests
@@ -96,15 +97,17 @@ def normalize_job(raw, source):
 
     apply_url = (
         raw.get("job_apply_link")
+        or raw.get("applicationLink")
         or raw.get("url")
         or raw.get("apply_url")
         or raw.get("job_url")
+        or raw.get("position_url")
     )
     refs = raw.get("refs")
     if not apply_url and isinstance(refs, dict):
         apply_url = refs.get("landing_page")
 
-    title = raw.get("job_title") or raw.get("name") or raw.get("title")
+    title = raw.get("job_title") or raw.get("position") or raw.get("name") or raw.get("title")
     if not title or not apply_url:
         return None
 
@@ -119,25 +122,41 @@ def normalize_job(raw, source):
     if remote is None:
         remote = raw.get("is_remote")
     if remote is None:
+        remote = raw.get("remote")
+    if isinstance(remote, str):
+        remote = remote.lower() in ("true", "yes", "1", "remote")
+    if remote is None:
         remote = "remote" in clean_text(raw.get("workplace_type")).lower()
 
+    salary = salary or raw.get("salaryText")
+    if isinstance(salary, (int, float)):
+        salary = str(salary)
+    elif not salary and (raw.get("minSalary") or raw.get("maxSalary")):
+        currency = clean_text(raw.get("currency"))
+        salary = " - ".join(filter(None, [
+            clean_text(raw.get("minSalary")),
+            clean_text(raw.get("maxSalary")),
+        ])) + ((" " + currency) if currency else "")
+
     return {
-        "id": clean_text(raw.get("job_id") or raw.get("id") or apply_url),
+        "id": clean_text(raw.get("job_id") or raw.get("guid") or raw.get("id") or raw.get("slug") or apply_url),
         "title": clean_text(title),
-        "company": clean_text(company) or "Company not listed",
-        "location": clean_text(location) or "Location not listed",
+        "company": clean_text(company or raw.get("companyName")) or "Company not listed",
+        "location": clean_text(location or raw.get("locationRestrictions")) or "Remote / location not listed",
         "employment_type": clean_text(
-            raw.get("job_employment_type") or raw.get("employment_type") or raw.get("type")
+            raw.get("job_employment_type") or raw.get("employment_type") or raw.get("employmentType")
+            or raw.get("job_types") or raw.get("type")
         ) or "Not specified",
         "experience_level": clean_text(
             raw.get("job_required_experience") or raw.get("experience_level") or raw.get("seniority")
         ),
         "salary": clean_text(salary) or "Not disclosed",
         "remote": bool(remote),
-        "description": clean_text(raw.get("job_description") or raw.get("description")),
-        "posted_at": clean_text(raw.get("job_posted_at_datetime_utc") or raw.get("posted_at") or raw.get("date")),
+        "description": clean_text(raw.get("job_description") or raw.get("description") or raw.get("excerpt")),
+        "posted_at": clean_text(raw.get("job_posted_at_datetime_utc") or raw.get("posted_at") or raw.get("pubDate") or raw.get("created_at") or raw.get("date")),
         "url": clean_text(apply_url),
         "source": source,
+        "source_url": "https://himalayas.app" if source == "Himalayas" else ("https://remoteok.com" if source == "Remote OK" else ("https://arbeitnow.com" if source == "Arbeitnow" else "")),
     }
 
 
@@ -157,56 +176,85 @@ def extract_items(payload):
     return []
 
 
-def fetch_jsearch(search):
-    api_key = os.getenv("RAPIDAPI_KEY")
-    if not api_key:
-        return [], "JSearch is not configured. Add RAPIDAPI_KEY to the backend environment."
-    query_parts = [search.keywords or "jobs"]
-    if search.location:
-        query_parts.append("in " + search.location)
-    if search.experience_level:
-        query_parts.append(search.experience_level + " level")
-    if search.employment_type:
-        query_parts.append(search.employment_type)
-    if search.remote is True:
-        query_parts.append("remote")
-    params = {
-        "query": " ".join(query_parts),
-        "page": str(search.page),
-        "num_pages": "1",
-        "country": search.country,
-        "date_posted": search.date_posted,
-    }
-    response = SESSION.get(
-        "https://jsearch.p.rapidapi.com/search",
-        headers={
-            "X-RapidAPI-Key": api_key,
-            "X-RapidAPI-Host": "jsearch.p.rapidapi.com",
-        },
-        params=params,
-        timeout=15,
-    )
+
+# Public feeds are cached in-process to avoid repeatedly requesting the same data.
+JOB_FEED_CACHE = {}
+JOB_FEED_CACHE_SECONDS = 3600
+
+
+def cached_feed(name, url, params=None):
+    cache_key = (name, tuple(sorted((params or {}).items())))
+    cached = JOB_FEED_CACHE.get(cache_key)
+    now = time.time()
+    if cached and now - cached["saved_at"] < JOB_FEED_CACHE_SECONDS:
+        return cached["payload"]
+    response = SESSION.get(url, params=params, timeout=20)
     response.raise_for_status()
     payload = response.json()
+    JOB_FEED_CACHE[cache_key] = {"saved_at": now, "payload": payload}
+    return payload
+
+
+def provider_items(payload):
+    if isinstance(payload, list):
+        return payload
+    return extract_items(payload)
+
+
+def fetch_himalayas(search):
+    params = {
+        "q": search.keywords or None,
+        "country": search.country.upper() if search.location else None,
+        "page": search.page,
+    }
+    if search.experience_level:
+        params["seniority"] = {
+            "entry": "Entry-level",
+            "junior": "Entry-level",
+            "mid": "Mid-level",
+            "senior": "Senior",
+            "internship": "Entry-level",
+        }.get(search.experience_level)
+    if search.employment_type:
+        params["employment_type"] = {
+            "FULLTIME": "Full Time",
+            "PARTTIME": "Part Time",
+            "CONTRACTOR": "Contractor",
+            "INTERN": "Intern",
+            "TEMPORARY": "Temporary",
+        }.get(search.employment_type)
+    params = {key: value for key, value in params.items() if value}
+    payload = cached_feed(
+        "Himalayas",
+        "https://himalayas.app/jobs/api/search",
+        params,
+    )
     return [
-        job for job in (normalize_job(item, "JSearch") for item in extract_items(payload))
+        job for job in (normalize_job(item, "Himalayas") for item in provider_items(payload))
         if job
     ], None
 
 
-def fetch_themuse(search):
-    params = {"page": max(search.page - 1, 0)}
-    if search.location:
-        params["location"] = search.location
-    response = SESSION.get(
-        "https://www.themuse.com/api/public/jobs",
-        params=params,
-        timeout=15,
-    )
-    response.raise_for_status()
-    payload = response.json()
+def fetch_remote_ok(search):
+    params = {}
+    if search.keywords:
+        params["tag"] = search.keywords.split()[0].lower()
+    payload = cached_feed("Remote OK", "https://remoteok.com/api", params)
+    items = provider_items(payload)
     return [
-        job for job in (normalize_job(item, "The Muse") for item in extract_items(payload))
+        job for job in (normalize_job(item, "Remote OK") for item in items)
+        if job
+    ], None
+
+
+def fetch_arbeitnow(search):
+    payload = cached_feed(
+        "Arbeitnow",
+        "https://www.arbeitnow.com/api/job-board-api",
+        {"page": search.page},
+    )
+    return [
+        job for job in (normalize_job(item, "Arbeitnow") for item in provider_items(payload))
         if job
     ], None
 
@@ -293,8 +341,9 @@ def search_jobs(search: Search):
                 errors.append(error)
         else:
             for source_name, fetcher in (
-                ("JSearch", fetch_jsearch),
-                ("The Muse", fetch_themuse),
+                ("Himalayas", fetch_himalayas),
+                ("Remote OK", fetch_remote_ok),
+                ("Arbeitnow", fetch_arbeitnow),
             ):
                 try:
                     source_jobs, error = fetcher(search)
