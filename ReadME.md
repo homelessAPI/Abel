@@ -7,7 +7,7 @@ Abel is a job discovery application. Search by keyword, location, experience lev
 - React + Vite frontend
 
 ## Local development
-Backend: `cd backend && uv sync && uv run uvicorn main:app --reload --port 8000`
+Backend: `cd backend && uv sync && uv run uvicorn main:app --reload --port 1011`
 Frontend: `cd frontend/Abel && npm install && npm run dev`
 
 Standard mode uses free public APIs from Himalayas and Remote OK; no API key, RapidAPI subscription, or paid plan is required. Set `CORS_ORIGINS` to the frontend origin and `VITE_API_URL` to the backend base URL.
