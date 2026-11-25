@@ -64,11 +64,12 @@ def safe_custom_url(value):
     return value
 
 
+
 def normalize_job(raw, source):
     if not isinstance(raw, dict):
         return None
 
-    company = raw.get("employer_name") or raw.get("company") or raw.get("company_name")
+    company = raw.get("employer_name") or raw.get("company") or raw.get("company_name") or raw.get("companyName")
     if isinstance(company, dict):
         company = company.get("name") or company.get("short_name")
 
@@ -79,14 +80,16 @@ def normalize_job(raw, source):
             for item in location
         )
     elif isinstance(location, dict):
-        location = ", ".join(
-            filter(None, [
-                clean_text(location.get("city")),
-                clean_text(location.get("state")),
-                clean_text(location.get("country")),
-                clean_text(location.get("name")),
-            ])
-        )
+        location = ", ".join(filter(None, [
+            clean_text(location.get("city")),
+            clean_text(location.get("state")),
+            clean_text(location.get("country")),
+            clean_text(location.get("name")),
+        ]))
+
+    restrictions = raw.get("locationRestrictions")
+    if not location and isinstance(restrictions, list):
+        location = ", ".join(restrictions) if restrictions else "Remote (Worldwide)"
 
     if not location:
         location = ", ".join(filter(None, [
@@ -111,12 +114,15 @@ def normalize_job(raw, source):
     if not title or not apply_url:
         return None
 
-    salary = raw.get("job_salary") or raw.get("salary") or raw.get("salary_range")
-    if not salary:
-        minimum = raw.get("min_salary") or raw.get("salary_min")
-        maximum = raw.get("max_salary") or raw.get("salary_max")
-        if minimum or maximum:
-            salary = " - ".join(filter(None, [clean_text(minimum), clean_text(maximum)]))
+    salary = raw.get("job_salary") or raw.get("salary") or raw.get("salary_range") or raw.get("salaryText")
+    minimum = raw.get("min_salary") or raw.get("salary_min") or raw.get("minSalary")
+    maximum = raw.get("max_salary") or raw.get("salary_max") or raw.get("maxSalary")
+    if not salary and (minimum is not None or maximum is not None):
+        currency = clean_text(raw.get("currency"))
+        period = clean_text(raw.get("salaryPeriod"))
+        salary = " - ".join(filter(None, [clean_text(minimum), clean_text(maximum)]))
+        salary += (" " + currency) if currency else ""
+        salary += (" / " + period) if period else ""
 
     remote = raw.get("job_is_remote")
     if remote is None:
@@ -125,38 +131,55 @@ def normalize_job(raw, source):
         remote = raw.get("remote")
     if isinstance(remote, str):
         remote = remote.lower() in ("true", "yes", "1", "remote")
+    if remote is None and source in ("Himalayas", "Remote OK"):
+        remote = True
     if remote is None:
         remote = "remote" in clean_text(raw.get("workplace_type")).lower()
 
-    salary = salary or raw.get("salaryText")
-    if isinstance(salary, (int, float)):
-        salary = str(salary)
-    elif not salary and (raw.get("minSalary") or raw.get("maxSalary")):
-        currency = clean_text(raw.get("currency"))
-        salary = " - ".join(filter(None, [
-            clean_text(raw.get("minSalary")),
-            clean_text(raw.get("maxSalary")),
-        ])) + ((" " + currency) if currency else "")
+    employment = (
+        raw.get("job_employment_type") or raw.get("employment_type")
+        or raw.get("employmentType") or raw.get("job_types") or raw.get("type")
+    )
+    if isinstance(employment, list):
+        employment = ", ".join(clean_text(item) for item in employment)
 
+    experience = raw.get("job_required_experience") or raw.get("experience_level") or raw.get("seniority")
+    if isinstance(experience, list):
+        experience = ", ".join(clean_text(item) for item in experience)
+
+    tags = raw.get("tags") or raw.get("categories") or []
+    if isinstance(tags, list):
+        tags_text = " ".join(clean_text(item) for item in tags)
+    else:
+        tags_text = clean_text(tags)
+
+    description = clean_text(
+        raw.get("job_description") or raw.get("description") or raw.get("excerpt")
+    )
+    description = (description + " " + tags_text).strip()
+
+    posted = raw.get("job_posted_at_datetime_utc") or raw.get("posted_at") or raw.get("pubDate") or raw.get("created_at") or raw.get("date")
+    if isinstance(posted, (int, float)):
+        posted = datetime.fromtimestamp(posted, timezone.utc).isoformat()
+
+    source_urls = {
+        "Himalayas": "https://himalayas.app",
+        "Remote OK": "https://remoteok.com",
+    }
     return {
         "id": clean_text(raw.get("job_id") or raw.get("guid") or raw.get("id") or raw.get("slug") or apply_url),
         "title": clean_text(title),
-        "company": clean_text(company or raw.get("companyName")) or "Company not listed",
-        "location": clean_text(location or raw.get("locationRestrictions")) or "Remote / location not listed",
-        "employment_type": clean_text(
-            raw.get("job_employment_type") or raw.get("employment_type") or raw.get("employmentType")
-            or raw.get("job_types") or raw.get("type")
-        ) or "Not specified",
-        "experience_level": clean_text(
-            raw.get("job_required_experience") or raw.get("experience_level") or raw.get("seniority")
-        ),
+        "company": clean_text(company) or "Company not listed",
+        "location": clean_text(location) or ("Remote" if remote else "Location not listed"),
+        "employment_type": clean_text(employment) or "Not specified",
+        "experience_level": clean_text(experience),
         "salary": clean_text(salary) or "Not disclosed",
         "remote": bool(remote),
-        "description": clean_text(raw.get("job_description") or raw.get("description") or raw.get("excerpt")),
-        "posted_at": clean_text(raw.get("job_posted_at_datetime_utc") or raw.get("posted_at") or raw.get("pubDate") or raw.get("created_at") or raw.get("date")),
+        "description": description,
+        "posted_at": clean_text(posted),
         "url": clean_text(apply_url),
         "source": source,
-        "source_url": "https://himalayas.app" if source == "Himalayas" else ("https://remoteok.com" if source == "Remote OK" else ("https://arbeitnow.com" if source == "Arbeitnow" else "")),
+        "source_url": source_urls.get(source, ""),
     }
 
 
@@ -201,29 +224,36 @@ def provider_items(payload):
     return extract_items(payload)
 
 
+
 def fetch_himalayas(search):
-    params = {
-        "q": search.keywords or None,
-        "country": search.country.upper() if search.location else None,
-        "page": search.page,
-    }
-    if search.experience_level:
-        params["seniority"] = {
-            "entry": "Entry-level",
-            "junior": "Entry-level",
-            "mid": "Mid-level",
-            "senior": "Senior",
-            "internship": "Entry-level",
-        }.get(search.experience_level)
-    if search.employment_type:
-        params["employment_type"] = {
-            "FULLTIME": "Full Time",
-            "PARTTIME": "Part Time",
-            "CONTRACTOR": "Contractor",
-            "INTERN": "Intern",
-            "TEMPORARY": "Temporary",
-        }.get(search.employment_type)
-    params = {key: value for key, value in params.items() if value}
+    params = {"page": search.page, "sort": "recent"}
+    if search.keywords:
+        params["q"] = search.keywords
+    if search.location and search.location.strip().lower() != "remote":
+        params["country"] = search.country.upper()
+    elif search.location and search.location.strip().lower() == "remote":
+        params["worldwide"] = "true"
+
+    seniority = {
+        "entry": "Entry-level",
+        "junior": "Entry-level",
+        "mid": "Mid-level",
+        "senior": "Senior",
+        "internship": "Entry-level",
+    }.get(search.experience_level)
+    if seniority:
+        params["seniority"] = seniority
+
+    employment_type = {
+        "FULLTIME": "Full Time",
+        "PARTTIME": "Part Time",
+        "CONTRACTOR": "Contractor",
+        "INTERN": "Intern",
+        "TEMPORARY": "Temporary",
+    }.get(search.employment_type)
+    if employment_type:
+        params["employment_type"] = employment_type
+
     payload = cached_feed(
         "Himalayas",
         "https://himalayas.app/jobs/api/search",
@@ -235,28 +265,17 @@ def fetch_himalayas(search):
     ], None
 
 
+
 def fetch_remote_ok(search):
     params = {}
     if search.keywords:
         params["tag"] = search.keywords.split()[0].lower()
     payload = cached_feed("Remote OK", "https://remoteok.com/api", params)
-    items = provider_items(payload)
     return [
-        job for job in (normalize_job(item, "Remote OK") for item in items)
+        job for job in (normalize_job(item, "Remote OK") for item in provider_items(payload))
         if job
     ], None
 
-
-def fetch_arbeitnow(search):
-    payload = cached_feed(
-        "Arbeitnow",
-        "https://www.arbeitnow.com/api/job-board-api",
-        {"page": search.page},
-    )
-    return [
-        job for job in (normalize_job(item, "Arbeitnow") for item in provider_items(payload))
-        if job
-    ], None
 
 
 def fetch_custom(search):
@@ -300,7 +319,10 @@ def matches_filters(job, search):
     ):
         return False
     if search.location and search.location.lower() not in job["location"].lower():
-        return False
+        # The Himalayas API already filters by country. A US-eligible remote role
+        # should remain visible for a city/state query because the source is remote-only.
+        if not (job["remote"] and search.country.lower() == "us" and job["source"] == "Himalayas"):
+            return False
     if search.remote is not None and job["remote"] != search.remote:
         return False
     if search.employment_type:
@@ -343,7 +365,6 @@ def search_jobs(search: Search):
             for source_name, fetcher in (
                 ("Himalayas", fetch_himalayas),
                 ("Remote OK", fetch_remote_ok),
-                ("Arbeitnow", fetch_arbeitnow),
             ):
                 try:
                     source_jobs, error = fetcher(search)
