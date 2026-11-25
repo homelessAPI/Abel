@@ -1,9 +1,6 @@
 from typing import Literal
-
+from urllib.parse import urlparse
 from pydantic import BaseModel, Field, field_validator
-
-from main import safe_custom_url
-
 
 class CustomSource(BaseModel):
     url: str
@@ -14,15 +11,12 @@ class CustomSource(BaseModel):
     @field_validator("url")
     @classmethod
     def validate_url(cls, value):
-        return safe_custom_url(value)
-
-    @field_validator("auth_header")
-    @classmethod
-    def validate_header(cls, value):
-        if not value or any(char in value for char in "\r\n:"):
-            raise ValueError("Invalid authentication header name.")
+        parsed = urlparse(value)
+        if parsed.scheme != "https" or not parsed.hostname:
+            raise ValueError("Custom source URLs must use HTTPS.")
+        if parsed.hostname in ("localhost", "127.0.0.1", "::1"):
+            raise ValueError("Local addresses are not allowed.")
         return value
-
 
 class Search(BaseModel):
     keywords: str = Field(default="", max_length=120)
