@@ -6,11 +6,14 @@ import time
 from urllib.parse import urlparse
 
 import requests
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 
 from datamodel.model import Search
+
+load_dotenv()
 
 app = FastAPI(title="Abel API", version="1.0.0")
 
@@ -165,6 +168,7 @@ def normalize_job(raw, source):
     source_urls = {
         "Himalayas": "https://himalayas.app",
         "Remote OK": "https://remoteok.com",
+        "JSearch": "https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch",
     }
     return {
         "id": clean_text(raw.get("job_id") or raw.get("guid") or raw.get("id") or raw.get("slug") or apply_url),
@@ -278,6 +282,43 @@ def fetch_remote_ok(search):
 
 
 
+
+def fetch_jsearch(search):
+    api_key = os.getenv("RAPIDAPI_KEY")
+    if not api_key:
+        return [], "JSearch is not configured. Add RAPIDAPI_KEY to backend/.env."
+
+    query_parts = [search.keywords or "jobs"]
+    if search.location:
+        query_parts.append("in " + search.location)
+    elif search.country:
+        query_parts.append("in " + search.country.upper())
+
+    params = {"query": " ".join(query_parts), "page": search.page, "num_pages": 1}
+    if search.date_posted != "all":
+        params["date_posted"] = search.date_posted
+    if search.remote is True:
+        params["remote_jobs_only"] = "true"
+    if search.employment_type:
+        params["employment_types"] = search.employment_type
+
+    response = SESSION.get(
+        "https://jsearch.p.rapidapi.com/search",
+        params=params,
+        headers={
+            "X-RapidAPI-Key": api_key,
+            "X-RapidAPI-Host": "jsearch.p.rapidapi.com",
+        },
+        timeout=20,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    return [
+        job for job in (normalize_job(item, "JSearch") for item in extract_items(payload))
+        if job
+    ], None
+
+
 def fetch_custom(search):
     config = search.custom_source
     if not config:
@@ -382,6 +423,7 @@ def search_jobs(search: Search):
             for source_name, fetcher in (
                 ("Himalayas", fetch_himalayas),
                 ("Remote OK", fetch_remote_ok),
+                ("JSearch", fetch_jsearch),
             ):
                 try:
                     source_jobs, error = fetcher(search)
