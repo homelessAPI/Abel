@@ -229,10 +229,10 @@ def fetch_himalayas(search):
     params = {"page": search.page, "sort": "recent"}
     if search.keywords:
         params["q"] = search.keywords
-    if search.location and search.location.strip().lower() != "remote":
-        params["country"] = search.country.upper()
-    elif search.location and search.location.strip().lower() == "remote":
+    if search.location and search.location.strip().lower() == "remote":
         params["worldwide"] = "true"
+    else:
+        params["country"] = search.country.upper()
 
     seniority = {
         "entry": "Entry-level",
@@ -310,6 +310,16 @@ def fetch_custom(search):
 
 
 def matches_filters(job, search):
+    if search.date_posted != "all" and job["posted_at"]:
+        try:
+            posted = datetime.fromisoformat(job["posted_at"].replace("Z", "+00:00"))
+            if posted.tzinfo is None:
+                posted = posted.replace(tzinfo=timezone.utc)
+            days = {"today": 1, "3days": 3, "week": 7, "month": 30}.get(search.date_posted)
+            if days and datetime.now(timezone.utc) - posted > timedelta(days=days):
+                return False
+        except (TypeError, ValueError):
+            pass
     haystack = " ".join([
         job["title"], job["company"], job["description"], job["employment_type"],
         job["experience_level"],
