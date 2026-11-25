@@ -67,7 +67,6 @@ def safe_custom_url(value):
     return value
 
 
-
 def normalize_job(raw, source):
     if not isinstance(raw, dict):
         return None
@@ -168,7 +167,6 @@ def normalize_job(raw, source):
     source_urls = {
         "Himalayas": "https://himalayas.app",
         "Remote OK": "https://remoteok.com",
-        "JSearch": "https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch",
     }
     return {
         "id": clean_text(raw.get("job_id") or raw.get("guid") or raw.get("id") or raw.get("slug") or apply_url),
@@ -203,7 +201,6 @@ def extract_items(payload):
     return []
 
 
-
 # Public feeds are cached in-process to avoid repeatedly requesting the same data.
 JOB_FEED_CACHE = {}
 JOB_FEED_CACHE_SECONDS = 3600
@@ -226,7 +223,6 @@ def provider_items(payload):
     if isinstance(payload, list):
         return payload
     return extract_items(payload)
-
 
 
 def fetch_himalayas(search):
@@ -269,7 +265,6 @@ def fetch_himalayas(search):
     ], None
 
 
-
 def fetch_remote_ok(search):
     params = {}
     if search.keywords:
@@ -277,44 +272,6 @@ def fetch_remote_ok(search):
     payload = cached_feed("Remote OK", "https://remoteok.com/api", params)
     return [
         job for job in (normalize_job(item, "Remote OK") for item in provider_items(payload))
-        if job
-    ], None
-
-
-
-
-def fetch_jsearch(search):
-    api_key = os.getenv("RAPIDAPI_KEY")
-    if not api_key:
-        return [], "JSearch is not configured. Add RAPIDAPI_KEY to backend/.env."
-
-    query_parts = [search.keywords or "jobs"]
-    if search.location:
-        query_parts.append("in " + search.location)
-    elif search.country:
-        query_parts.append("in " + search.country.upper())
-
-    params = {"query": " ".join(query_parts), "page": search.page, "num_pages": 1}
-    if search.date_posted != "all":
-        params["date_posted"] = search.date_posted
-    if search.remote is True:
-        params["remote_jobs_only"] = "true"
-    if search.employment_type:
-        params["employment_types"] = search.employment_type
-
-    response = SESSION.get(
-        "https://jsearch.p.rapidapi.com/search",
-        params=params,
-        headers={
-            "X-RapidAPI-Key": api_key,
-            "X-RapidAPI-Host": "jsearch.p.rapidapi.com",
-        },
-        timeout=20,
-    )
-    response.raise_for_status()
-    payload = response.json()
-    return [
-        job for job in (normalize_job(item, "JSearch") for item in extract_items(payload))
         if job
     ], None
 
@@ -423,7 +380,6 @@ def search_jobs(search: Search):
             for source_name, fetcher in (
                 ("Himalayas", fetch_himalayas),
                 ("Remote OK", fetch_remote_ok),
-                ("JSearch", fetch_jsearch),
             ):
                 try:
                     source_jobs, error = fetcher(search)
