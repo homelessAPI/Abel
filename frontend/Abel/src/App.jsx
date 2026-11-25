@@ -1,92 +1,10 @@
 import { useState } from 'react'
 import './App.css'
-
-function App() {
-  const [search_query, setSearchQuery] = useState('')
-  const [jobs, setJobs] = useState([])
-  const [loading, setLoading] = useState('')
-  const [error, setError] = useState('')
-
-  async function handle_submit(e){
-    e.preventDefault()
-
-    setLoading(true)
-    try {
-
-      const search = {
-        search: search_query
-      }
-
-      const response = await fetch("http://127.0.0.1:1011/",
-        {
-        method: 'POST', 
-        headers: {'content-type': "application/json"
-        },
-        body: JSON.stringify(search)
-        })
-
-        console.log("response: ", response)
-
-        const data = await response.json()
-        console.log(data)
-
-        if (!response.ok) {
-          setJobs([])
-          setError( data.detail || "an error has occured")
-        }
-        else {
-          setJobs(data.jobs)
-          setError(null)
-        }
-      }
-    catch (error) {
-      setJobs([])
-      setError("an error has occured")
-    }
-    finally{
-      setLoading(false)
-    }
-
-  }
-
-  return (
-    <>
-    <div className='Search-Criteria'>
-      <fieldset>
-        <legend>Jobs</legend>
-
-        <input type="text" placeholder='Search' value={search_query} onChange={(e)=>setSearchQuery(e.target.value)}/>
-        <button onClick={handle_submit} disabled={loading}>{loading? 'Searching...' : 'Search'}</button>
-
-        {loading ? <p> searching ...</p>: null}
-        <table>
-          <thead>
-            <tr>
-              <th>Ttle</th>
-              <th>Company</th>
-              <th>Location</th>
-              <th>Is Remote?</th>
-              <th>Apply</th>
-            </tr>
-          </thead>
-          <tbody>
-            {jobs.length > 0?
-              jobs.map((job, index) =>
-              <tr key={index}>
-                <td>{job.Job_Title}</td>
-                <td>{job.Company_Name}</td>
-                <td>{job.Location}</td>
-                <td>{job.is_remote}</td>
-                <td><a href='{job.URL}'>Apply Link</a></td>
-              </tr>): <tr>
-                <td colSpan='3'>No jobs found...</td>
-              </tr>
-            }
-          </tbody>
-        </table>
-      </fieldset>
-    </div>
-    </>
-  )
+const API = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
+export default function App() {
+ const [f,S]=useState({keywords:'',location:'',experience_level:'',employment_type:'',remote:'',date_posted:'all',source_mode:'default',custom_url:'',api_key:'',auth_header:'Authorization'})
+ const [jobs,J]=useState([]),[warnings,W]=useState([]),[error,E]=useState(''),[loading,L]=useState(false),[searched,Q]=useState(false)
+ const set=(k,v)=>S(p=>({...p,[k]:v}))
+ async function submit(e){e.preventDefault();L(true);E('');W([]);Q(true);const body={keywords:f.keywords,location:f.location||null,experience_level:f.experience_level||null,employment_type:f.employment_type||null,remote:f.remote===''?null:f.remote==='true',date_posted:f.date_posted,source_mode:f.source_mode,limit:50};if(f.source_mode==='custom')body.custom_source={url:f.custom_url,api_key:f.api_key||null,auth_header:f.auth_header,auth_prefix:f.auth_header==='x-api-key'?'':'Bearer '};try{const r=await fetch(API+'/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();if(!r.ok)throw Error(d.detail||'Search failed');J(d.jobs||[]);W(d.warnings||[])}catch(x){J([]);E(x.message)}finally{L(false)}}
+ return <main className="app-shell"><header className="topbar"><div className="brand"><span className="brand-mark">A</span> abel</div><div className="top-note">One search. Multiple job sources.</div></header><section className="hero"><div className="eyebrow">Your next opportunity starts here</div><h1>Find work that<br/>fits your next move.</h1><p>Search opportunities across job sources with filters that matter. Keep it simple, or connect your own API when you want more control.</p></section><section className="search-panel"><div className="panel-heading"><h2>Build your job search</h2><div className="mode-toggle"><button type="button" className={f.source_mode==='default'?'active':''} onClick={()=>set('source_mode','default')}>Standard</button><button type="button" className={f.source_mode==='custom'?'active':''} onClick={()=>set('source_mode','custom')}>Custom source</button></div></div><form onSubmit={submit}><div className="form-grid"><div className="field wide"><label>What kind of role?</label><input value={f.keywords} onChange={e=>set('keywords',e.target.value)} placeholder="e.g. software engineer, data analyst"/></div><div className="field wide"><label>Where?</label><input value={f.location} onChange={e=>set('location',e.target.value)} placeholder="City, state, or remote"/></div><div className="field"><label>Experience level</label><select value={f.experience_level} onChange={e=>set('experience_level',e.target.value)}><option value="">Any experience</option><option value="entry">Entry level</option><option value="junior">Junior</option><option value="mid">Mid-level</option><option value="senior">Senior</option><option value="internship">Internship</option></select></div><div className="field"><label>Employment type</label><select value={f.employment_type} onChange={e=>set('employment_type',e.target.value)}><option value="">Any type</option><option value="FULLTIME">Full-time</option><option value="PARTTIME">Part-time</option><option value="INTERN">Internship</option><option value="CONTRACTOR">Contract</option><option value="TEMPORARY">Temporary</option></select></div><div className="field"><label>Work arrangement</label><select value={f.remote} onChange={e=>set('remote',e.target.value)}><option value="">Any arrangement</option><option value="true">Remote only</option><option value="false">On-site / hybrid</option></select></div><div className="field"><label>Date posted</label><select value={f.date_posted} onChange={e=>set('date_posted',e.target.value)}><option value="all">Any time</option><option value="today">Today</option><option value="3days">Last 3 days</option><option value="week">Last week</option><option value="month">Last month</option></select></div>{f.source_mode==='custom'&&<div className="custom-box"><div className="field"><label>API endpoint (HTTPS)</label><input type="url" required value={f.custom_url} onChange={e=>set('custom_url',e.target.value)} placeholder="https://api.example.com/jobs"/></div><div className="field"><label>Authentication header</label><select value={f.auth_header} onChange={e=>set('auth_header',e.target.value)}><option value="Authorization">Authorization: Bearer</option><option value="x-api-key">x-api-key</option></select></div><div className="field"><label>API key (optional)</label><input type="password" autoComplete="off" value={f.api_key} onChange={e=>set('api_key',e.target.value)} placeholder="Only sent to Abel backend"/></div><p className="custom-help">Your endpoint should return JSON containing jobs, results, data, or items. Credentials are used for this search only and are not stored.</p></div>}</div><div className="actions"><button className="search-button" disabled={loading}>{loading?'Searching sources...':'Find jobs →'}</button></div></form></section><section aria-live="polite"><div className="results-head"><h2>{searched?'Search results':'Ready when you are'}</h2><span className="results-meta">{jobs.length} opportunities</span></div>{error&&<div className="error-state">{error}</div>}{!error&&searched&&!loading&&jobs.length===0&&<div className="empty-state">No matching jobs yet. Try broader keywords or check the source warnings.</div>}{!searched&&<div className="empty-state">Enter a role or keyword to start exploring opportunities.</div>}{warnings.length>0&&<ul className="warning-list">{warnings.map((w,i)=><li key={i}>{w}</li>)}</ul>}<div className="job-list">{jobs.map(j=><article className="job-card" key={j.id||j.url}><div><h3 className="job-title">{j.title}</h3><div className="job-company">{j.company}</div><div className="job-details"><span>{j.location}</span><span>{j.employment_type}</span><span>{j.remote?'Remote':'On-site / unspecified'}</span><span>{j.salary}</span><span className="pill">{j.source}</span></div></div><a className="apply-link" href={j.url} target="_blank" rel="noreferrer">View opportunity ↗</a></article>)}</div></section><footer className="footer">Abel · Job discovery, without the noise.</footer></main>
 }
-export default App
