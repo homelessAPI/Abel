@@ -215,6 +215,7 @@ def fetch_custom(search):
     config = search.custom_source
     if not config:
         return [], "Custom source configuration is missing."
+    safe_custom_url(config.url)
     headers = {"Accept": "application/json"}
     if config.api_key:
         headers[config.auth_header] = config.auth_prefix + config.api_key
